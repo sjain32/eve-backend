@@ -1,0 +1,195 @@
+// ============================================================
+// Prisma Schema  –  eve platform
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────
+// 0. USER ROLES
+// ─────────────────────────────────────────
+enum UserRole {
+  PATIENT       // books diagnostic appointments
+  CENTRE_HEAD   // owns and manages a diagnostic centre
+}
+
+// ─────────────────────────────────────────
+// 1. USERS
+// ─────────────────────────────────────────
+model User {
+  id           String    @id @default(uuid())
+  name         String    @db.VarChar(120)
+  email        String    @unique @db.VarChar(255)
+  passwordHash String    @map("password_hash") @db.VarChar(255)
+  role         UserRole  @default(PATIENT)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  sessions        Session[]
+  bookings        Booking[]
+  ownedCentres    DiagnosticCentre[]
+
+  @@map("users")
+}
+
+// ─────────────────────────────────────────
+// 2. SESSIONS  (JWT + session-id hybrid)
+//    One row per active device / browser tab.
+//    Invalidated by deleting the row or setting revokedAt.
+//    The refresh token is stored hashed so a leaked DB row
+//    cannot be replayed.
+// ─────────────────────────────────────────
+model Session {
+  id               String    @id @default(uuid())
+  userId           String    @map("user_id")
+  refreshTokenHash String    @map("refresh_token_hash") @db.VarChar(255)
+  userAgent        String?   @map("user_agent") @db.VarChar(512)
+  ipAddress        String?   @map("ip_address") @db.VarChar(45)
+  expiresAt        DateTime  @map("expires_at") @db.Timestamptz()
+  revokedAt        DateTime? @map("revoked_at") @db.Timestamptz()
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+// ─────────────────────────────────────────
+// 3. DIAGNOSTIC CENTRES
+// ─────────────────────────────────────────
+model DiagnosticCentre {
+  id        String   @id @default(uuid())
+  name      String   @db.VarChar(200)
+  location  String   @db.VarChar(255)
+  ownerId   String   @map("owner_id")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  owner       User         @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  centreTests CentreTest[]
+
+  @@map("diagnostic_centres")
+}
+
+// ─────────────────────────────────────────
+// 4. TESTS  (master catalogue, centre-agnostic)
+// ─────────────────────────────────────────
+model Test {
+  id          String   @id @default(uuid())
+  name        String   @db.VarChar(150)
+  description String?  @db.Text
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  centreTests CentreTest[]
+
+  @@map("tests")
+}
+
+// ─────────────────────────────────────────
+// 5. CENTRE_TESTS  (which centre offers which test)
+// ─────────────────────────────────────────
+model CentreTest {
+  id       String  @id @default(uuid())
+  centreId String  @map("centre_id")
+  testId   String  @map("test_id")
+  price    Decimal @db.Decimal(10, 2)
+  isActive Boolean @default(true) @map("is_active")
+
+  centre    DiagnosticCentre @relation(fields: [centreId], references: [id], onDelete: Cascade)
+  test      Test             @relation(fields: [testId], references: [id], onDelete: Cascade)
+  timeSlots TimeSlot[]
+
+  @@unique([centreId, testId])
+  @@map("centre_tests")
+}
+
+// ─────────────────────────────────────────
+// 6. TIME_SLOTS  (bookable inventory)
+// ─────────────────────────────────────────
+model TimeSlot {
+  id           String   @id @default(uuid())
+  centreTestId String   @map("centre_test_id")
+  slotDate     DateTime @map("slot_date") @db.Date
+  startTime    DateTime @map("start_time") @db.Time()
+  capacity     Int      @default(1)
+  bookedCount  Int      @default(0) @map("booked_count")
+
+  centreTest CentreTest @relation(fields: [centreTestId], references: [id], onDelete: Cascade)
+  bookings   Booking[]
+
+  @@unique([centreTestId, slotDate, startTime])
+  @@map("time_slots")
+}
+
+// ─────────────────────────────────────────
+// 7. BOOKINGS
+// ─────────────────────────────────────────
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  FAILED
+  CANCELLED
+}
+
+model Booking {
+  id         String        @id @default(uuid())
+  userId     String        @map("user_id")
+  timeSlotId String        @map("time_slot_id")
+  amount     Decimal       @db.Decimal(10, 2)
+  status     BookingStatus @default(PENDING)
+  createdAt  DateTime      @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt  DateTime      @updatedAt @map("updated_at") @db.Timestamptz()
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  timeSlot TimeSlot @relation(fields: [timeSlotId], references: [id], onDelete: Restrict)
+  payment  Payment?
+
+  @@map("bookings")
+}
+
+// ─────────────────────────────────────────
+// 8. PAYMENTS
+// ─────────────────────────────────────────
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+model Payment {
+  id            String        @id @default(uuid())
+  bookingId     String        @unique @map("booking_id")
+  providerRefId String?       @unique @map("provider_ref_id") @db.VarChar(100)
+  amount        Decimal       @db.Decimal(10, 2)
+  status        PaymentStatus @default(PENDING)
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt     DateTime      @updatedAt @map("updated_at") @db.Timestamptz()
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@map("payments")
+}
+
+// ─────────────────────────────────────────
+// 9. WEBHOOK_EVENTS  (idempotency ledger + retry tracking)
+// ─────────────────────────────────────────
+model WebhookEvent {
+  id           String    @id @default(uuid())
+  eventId      String    @unique @map("event_id") @db.VarChar(150)
+  payload      Json
+  processedAt  DateTime? @map("processed_at") @db.Timestamptz()
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  // Retry tracking
+  retryCount   Int       @default(0) @map("retry_count")
+  nextRetryAt  DateTime? @map("next_retry_at") @db.Timestamptz()
+  lastError    String?   @map("last_error") @db.Text
+
+  @@index([nextRetryAt])
+  @@map("webhook_events")
+}

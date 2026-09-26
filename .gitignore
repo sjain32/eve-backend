@@ -1,0 +1,33 @@
+# ── Dependencies ──────────────────────────────────────────────
+node_modules/
+
+# ── Environment secrets ────────────────────────────────────────
+src/config/.env
+.env
+*.env
+!.env.example
+
+# ── Build output ───────────────────────────────────────────────
+dist/
+coverage/
+
+# ── Prisma generated client ────────────────────────────────────
+# The .prisma/client directory is generated at install time
+# via postinstall — do not commit it
+node_modules/.prisma/
+
+# ── Logs ──────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── OS / editor ───────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ── AI agent configs (keep .kiro if using Kiro IDE) ───────────
+.agents/
+.claude/
+.cursor/
+.devin/
